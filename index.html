@@ -55,6 +55,7 @@
                     <label class="field-label mt-2">Đích
                         <select id="targetSelect" class="field-input"></select>
                     </label>
+                    <p class="hint-text">Đưa chuột vào đỉnh để hiện nút xóa ngay. Nút giữ lại khi rời chuột để bạn kịp bấm xóa, hoặc sẽ đổi theo đỉnh khác. Bấm vào nhãn trọng số trên cạnh để sửa.</p>
                 </section>
 
                 <section class="control-panel">
@@ -106,15 +107,12 @@
                     </div>
                 </section>
 
-                <section class="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
-                    <label class="section-label">Phân tích</label>
-                    <div class="grid grid-cols-2 gap-x-3 gap-y-2 text-xs" id="analysisOptions">
-                        <label class="check-row"><input type="checkbox" value="euler" checked><span>Euler</span></label>
-                        <label class="check-row"><input type="checkbox" value="hamilton" checked><span>Hamilton</span></label>
-                        <label class="check-row"><input type="checkbox" value="kruskal" checked><span>Kruskal</span></label>
-                        <label class="check-row"><input type="checkbox" value="prim" checked><span>Prim</span></label>
-                        <label class="check-row"><input type="checkbox" value="dijkstra" checked><span>Dijkstra</span></label>
-                        <label class="check-row"><input type="checkbox" value="bellmanFord" checked><span>Bellman-Ford</span></label>
+                <section class="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3 analysis-panel">
+                    <div class="analysis-group-heading"><label class="section-label">Phân tích</label><span class="analysis-group-tag">6 thuật toán</span></div>
+                    <div class="analysis-option-groups" id="analysisOptions">
+                        <fieldset class="analysis-option-group"><legend>Duyệt đồ thị</legend><label class="check-row"><input type="checkbox" value="euler" checked><span>Euler</span></label><label class="check-row"><input type="checkbox" value="hamilton" checked><span>Hamilton</span></label></fieldset>
+                        <fieldset class="analysis-option-group"><legend>Cây khung nhỏ nhất</legend><label class="check-row"><input type="checkbox" value="kruskal" checked><span>Kruskal</span></label><label class="check-row"><input type="checkbox" value="prim" checked><span>Prim</span></label></fieldset>
+                        <fieldset class="analysis-option-group"><legend>Đường đi ngắn nhất</legend><label class="check-row"><input type="checkbox" value="dijkstra" checked><span>Dijkstra</span></label><label class="check-row"><input type="checkbox" value="bellmanFord" checked><span>Bellman-Ford</span></label></fieldset>
                     </div>
                     <button id="btnAnalyze" class="analysis-button"><i class="fa-solid fa-bolt"></i><span>Phân tích đồ thị</span></button>
                     <div class="grid grid-cols-2 gap-2">
@@ -132,12 +130,16 @@
                     <button id="btnToggleMatrix" class="w-full compact-button"><span><i class="fa-solid fa-table mr-2 text-indigo-500"></i>Ma trận kề</span><i class="fa-solid fa-chevron-down"></i></button>
                     <div id="matrixContainer" class="hidden mt-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-x-auto"><div id="matrixContent" class="text-xs font-mono whitespace-pre"></div></div>
                 </section>
+                <section>
+                    <button id="btnToggleDegrees" class="w-full compact-button"><span><i class="fa-solid fa-chart-column mr-2 text-cyan-500"></i>Bậc của đỉnh</span><i class="fa-solid fa-chevron-down"></i></button>
+                    <div id="degreesContainer" class="hidden mt-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-x-auto"><div id="degreesContent" class="degree-grid"></div></div>
+                </section>
             </aside>
 
             <main class="lg:col-span-8 xl:col-span-9 flex flex-col h-full bg-slate-100/50 dark:bg-slate-950 overflow-hidden">
                 <div class="flex items-center justify-between px-6 py-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0">
                     <div class="flex items-center gap-2 text-sm font-semibold text-indigo-600 dark:text-indigo-400"><i class="fa-solid fa-draw-polygon"></i>Vùng vẽ tương tác</div>
-                    <div class="flex items-center gap-3"><span class="text-xs text-slate-400 dark:text-slate-500" id="canvasStats">0 đỉnh | 0 cạnh</span><button id="btnClear" class="clear-canvas-button"><i class="fa-solid fa-trash-can"></i><span>Xóa tất cả</span></button></div>
+                    <div class="flex items-center gap-3"><span class="text-xs text-slate-400 dark:text-slate-500" id="canvasStats">0 đỉnh | 0 cạnh</span><button id="btnUndo" class="undo-canvas-button" title="Quay lại (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i><span>Quay lại</span></button><button id="btnClear" class="clear-canvas-button"><i class="fa-solid fa-trash-can"></i><span>Xóa tất cả</span></button></div>
                 </div>
                 <div id="viewCanvas" class="flex-1 relative overflow-hidden flex flex-col">
                     <div class="canvas-legend"><span><i class="legend-dot dot-node"></i>Đỉnh</span><span><i class="legend-dot dot-selected"></i>Chọn</span><span><i class="legend-dot dot-active"></i>Đang duyệt</span></div>
@@ -147,6 +149,13 @@
                         <div class="flex items-center gap-2"><button id="animPrev" class="icon-button compact"><i class="fa-solid fa-backward-step"></i></button><button id="animPausePlay" class="play-button"><i class="fa-solid fa-pause"></i></button><button id="animNext" class="icon-button compact"><i class="fa-solid fa-forward-step"></i></button></div>
                     </div>
                 </div>
+                <section class="run-panel">
+                    <div class="run-panel-heading"><div><span class="eyebrow">Mô phỏng có hướng dẫn</span><h2>Chạy thuật toán</h2></div><span id="runStatus" class="run-status">Chưa chạy</span></div>
+                    <div class="run-controls"><label class="field-label run-select">Thuật toán
+                        <select id="runAlgorithmSelect" class="field-input"><option value="euler">Euler</option><option value="hamilton">Hamilton</option><option value="kruskal">Kruskal</option><option value="prim">Prim</option><option value="dijkstra">Dijkstra</option><option value="bellmanFord">Bellman-Ford</option></select>
+                    </label><button id="btnRunAlgorithm" class="run-button"><i class="fa-solid fa-play"></i><span>Chạy thuật toán</span></button></div>
+                </section>
+                <section class="log-panel"><div class="run-panel-heading"><div><span class="eyebrow">Nhật ký quyết định</span><h2>Giải thích từng bước</h2></div><button id="btnClearLog" class="log-clear-button">Xóa log</button></div><ol id="algorithmLog" class="algorithm-log"><li>Chọn một thuật toán rồi bấm “Chạy thuật toán” để xem lý do chọn hoặc loại từng cạnh.</li></ol></section>
             </main>
         </div>
     </div>

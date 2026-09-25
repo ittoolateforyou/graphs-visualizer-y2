@@ -7,11 +7,18 @@ const state = {
     hoveredVertex: null,
     draggingVertex: null,
     didDrag: false,
+    dragHistorySaved: false,
     analysis: null,
     animationSteps: [],
     animationIndex: 0,
     animationTimer: null,
-    animationSpeed: 900
+    animationSpeed: 900,
+    history: [],
+    deleteTimer: null,
+    edgeHitBoxes: [],
+    editingEdgeId: null,
+    loggedAnimationSteps: new Set(),
+    activeAlgorithm: null
 };
 
 const dom = {
@@ -25,6 +32,8 @@ const dom = {
     stats: document.getElementById('canvasStats'),
     matrix: document.getElementById('matrixContent'),
     matrixContainer: document.getElementById('matrixContainer'),
+    degreesContainer: document.getElementById('degreesContainer'),
+    degrees: document.getElementById('degreesContent'),
     animationBar: document.getElementById('animControlBar'),
     animationDescription: document.getElementById('animStepDesc'),
     animationPausePlay: document.getElementById('animPausePlay'),
@@ -34,7 +43,11 @@ const dom = {
     randomCountValue: document.getElementById('vertexCountVal'),
     randomWeightMode: document.getElementById('weightMode'),
     randomExtraBranches: document.getElementById('randomExtraBranches'),
-    randomDensity: document.getElementById('randomDensity')
+    randomDensity: document.getElementById('randomDensity'),
+    runAlgorithm: document.getElementById('runAlgorithmSelect'),
+    runButton: document.getElementById('btnRunAlgorithm'),
+    runStatus: document.getElementById('runStatus'),
+    log: document.getElementById('algorithmLog')
 };
 const context = dom.canvas.getContext('2d');
 
@@ -65,7 +78,9 @@ function graphAdjacency() {
     return adjacency;
 }
 
-function setGraph(vertices, edges) {
+function setGraph(vertices, edges, clearHistory = true) {
+    clearTimeout(state.deleteTimer);
+    hideDeleteButton();
     state.vertices = vertices.map(vertex => ({ ...vertex }));
     state.edges = edges.map((edge, index) => ({ id: edge.id ?? index, u: edge.u, v: edge.v, weight: edge.weight ?? 1 }));
     state.nextEdgeId = state.edges.reduce((max, edge) => Math.max(max, edge.id), -1) + 1;
@@ -76,21 +91,49 @@ function setGraph(vertices, edges) {
     drawGraph();
 }
 
+function saveHistory() {
+    state.history = [...state.history.slice(-29), {
+        vertices: state.vertices.map(vertex => ({ ...vertex })),
+        edges: state.edges.map(edge => ({ ...edge }))
+    }];
+}
+
+function undoGraphChange() {
+    const previous = state.history.pop();
+    if (!previous) return;
+    setGraph(previous.vertices, previous.edges, false);
+}
+
 function resetAnalysis() {
     stopAnimation();
     state.analysis = null;
     state.animationSteps = [];
     state.animationIndex = 0;
+    state.loggedAnimationSteps = new Set();
+    state.activeAlgorithm = null;
+    cancelWeightEdit();
     dom.animationBar.classList.add('hidden');
     dom.animationBar.classList.remove('flex');
     dom.step.disabled = true;
     dom.play.disabled = true;
     dom.result.innerHTML = '<p class="italic text-slate-400">Đồ thị đã thay đổi. Hãy bấm Phân tích.</p>';
+    dom.runStatus.textContent = 'Chưa chạy';
+    clearLog('Đồ thị đã thay đổi. Chọn lại thuật toán để tạo nhật ký mới.');
 }
 
 function updateStats() {
     dom.stats.textContent = `${state.vertices.length} đỉnh | ${state.edges.length} cạnh`;
     updateMatrix();
+    updateDegrees();
+}
+
+function updateDegrees() {
+    if (state.vertices.length === 0) {
+        dom.degrees.innerHTML = '<span class="empty-table">Chưa có đỉnh.</span>';
+        return;
+    }
+    const adjacency = graphAdjacency();
+    dom.degrees.innerHTML = state.vertices.map(vertex => `<div class="degree-cell"><span>${escapeHtml(vertex.name)}</span><strong>${adjacency[vertex.id].length}</strong></div>`).join('');
 }
 
 function updateSelectors() {
@@ -110,12 +153,12 @@ function updateMatrix() {
         return;
     }
     const adjacency = graphAdjacency();
-    const header = `    ${state.vertices.map(vertex => vertex.name.padStart(5)).join('')}`;
+    const header = state.vertices.map(vertex => `<th scope="col">${escapeHtml(vertex.name)}</th>`).join('');
     const rows = state.vertices.map(vertex => {
-        const values = state.vertices.map(other => adjacency[vertex.id].find(item => item.id === other.id)?.weight ?? 0);
-        return `${vertex.name.padEnd(3)}| ${values.map(value => String(value).padStart(5)).join('')}`;
-    });
-    dom.matrix.textContent = [header, ...rows].join('\n');
+        const values = state.vertices.map(other => adjacency[vertex.id].find(item => item.id === other.id));
+        return `<tr><th scope="row">${escapeHtml(vertex.name)}</th>${values.map(item => `<td class="${item ? 'has-edge' : ''}">${item?.weight ?? 0}</td>`).join('')}</tr>`;
+    }).join('');
+    dom.matrix.innerHTML = `<table class="adjacency-table"><thead><tr><th scope="col">V \ V</th>${header}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function resizeCanvas() {
@@ -145,6 +188,8 @@ function drawGraph(highlightedVertices = [], highlightedEdges = []) {
     context.clearRect(0, 0, width, height);
     const dark = document.documentElement.classList.contains('dark');
 
+    state.edgeHitBoxes = [];
+    const labelPositions = [];
     state.edges.forEach(edge => {
         const start = state.vertices.find(vertex => vertex.id === edge.u);
         const end = state.vertices.find(vertex => vertex.id === edge.v);
@@ -156,13 +201,36 @@ function drawGraph(highlightedVertices = [], highlightedEdges = []) {
         context.strokeStyle = isHighlighted ? '#10b981' : (dark ? '#475569' : '#cbd5e1');
         context.lineWidth = isHighlighted ? 4 : 2;
         context.stroke();
-        const labelX = (start.x + end.x) / 2;
-        const labelY = (start.y + end.y) / 2;
-        context.fillStyle = dark ? '#e2e8f0' : '#334155';
-        context.font = '500 11px DM Mono, monospace';
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const length = Math.hypot(dx, dy) || 1;
+        const positions = [0.5, 0.36, 0.64, 0.24, 0.76, 0.12, 0.88];
+        let labelT = positions[edge.id % positions.length];
+        for (const candidate of positions) {
+            const candidateX = start.x + dx * candidate;
+            const candidateY = start.y + dy * candidate;
+            if (!labelPositions.some(position => Math.hypot(position.x - candidateX, position.y - candidateY) < 27)) {
+                labelT = candidate;
+                break;
+            }
+        }
+        const labelX = start.x + dx * labelT;
+        const labelY = start.y + dy * labelT;
+        state.edgeHitBoxes.push({ edge, x: labelX, y: labelY, radius: 13 });
+        labelPositions.push({ x: labelX, y: labelY });
+        if (state.editingEdgeId === edge.id) return;
+        context.beginPath();
+        context.arc(labelX, labelY, 12, 0, 2 * Math.PI);
+        context.fillStyle = dark ? '#164e63' : '#e0f2fe';
+        context.fill();
+        context.strokeStyle = dark ? '#22d3ee' : '#0891b2';
+        context.lineWidth = 1;
+        context.stroke();
+        context.fillStyle = dark ? '#cffafe' : '#075985';
+        context.font = '600 10px DM Mono, monospace';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
-        context.fillText(String(edge.weight), labelX, labelY - 8);
+        context.fillText(String(edge.weight), labelX, labelY);
     });
 
     state.vertices.forEach(vertex => {
@@ -271,6 +339,7 @@ function generateRandomGraph() {
         return;
     }
 
+    if (state.vertices.length) saveHistory();
     const rect = dom.canvas.parentElement.getBoundingClientRect();
     const vertices = Array.from({ length: count }, (_, index) => ({ id: index, name: String.fromCharCode(65 + index), ...randomPosition(index, count, rect.width, rect.height) }));
     const mustPreserveCycle = algorithms.includes('euler') || algorithms.includes('hamilton');
@@ -333,9 +402,47 @@ function createPreset(type) {
     return { vertices, edges: weighted([[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]]) };
 }
 
-function loadPreset(type) { setGraph(...Object.values(createPreset(type))); }
+function loadPreset(type) { if (state.vertices.length) saveHistory(); setGraph(...Object.values(createPreset(type))); }
 
-function clearGraph() { setGraph([], []); }
+function clearGraph() { if (state.vertices.length) saveHistory(); setGraph([], []); }
+
+function appendLog(message, kind = 'info') {
+    const item = document.createElement('li');
+    item.className = `log-${kind}`;
+    item.textContent = message;
+    dom.log.appendChild(item);
+}
+
+function clearLog(message = 'Chọn một thuật toán rồi bấm “Chạy thuật toán” để xem lý do chọn hoặc loại từng cạnh.') {
+    dom.log.innerHTML = '';
+    state.loggedAnimationSteps = new Set();
+    appendLog(message);
+}
+
+function logAnalysis(algorithm) {
+    clearLog(`${algorithm}: bắt đầu trên ${state.vertices.length} đỉnh và ${state.edges.length} cạnh.`);
+}
+
+function runSelectedAlgorithm() {
+    const algorithm = dom.runAlgorithm.value;
+    stopAnimation();
+    const checkbox = document.querySelector(`#analysisOptions input[value="${algorithm}"]`);
+    if (checkbox && !checkbox.checked) checkbox.checked = true;
+    if (!analyzeGraph()) return;
+    state.activeAlgorithm = algorithm;
+    prepareAnimation();
+    logAnalysis(algorithm === 'bellmanFord' ? 'bellmanFord' : algorithm);
+    dom.runStatus.textContent = `Đang xem ${algorithm}`;
+    if (state.animationSteps.length) {
+        dom.animationBar.classList.remove('hidden');
+        dom.animationBar.classList.add('flex');
+        showAnimationStep(0);
+    } else {
+        dom.animationBar.classList.add('hidden');
+        dom.animationBar.classList.remove('flex');
+        appendLog(`Không thể mô phỏng ${algorithm}: đồ thị không thỏa điều kiện hoặc không có bước hợp lệ.`, 'reject');
+    }
+}
 
 function setMode(mode) {
     state.mode = mode;
@@ -346,6 +453,7 @@ function setMode(mode) {
 }
 
 function addVertex(point) {
+    saveHistory();
     const id = state.vertices.length ? Math.max(...state.vertices.map(vertex => vertex.id)) + 1 : 0;
     state.vertices = [...state.vertices, { id, name: String.fromCharCode(65 + id), x: point.x, y: point.y }];
     resetAnalysis();
@@ -365,11 +473,107 @@ function addEdge(start, end) {
         showError('Trọng số cạnh phải là một số hợp lệ.');
         return;
     }
+    saveHistory();
     state.edges = [...state.edges, { id: state.nextEdgeId, u: start.id, v: end.id, weight }];
     state.nextEdgeId += 1;
     resetAnalysis();
     updateStats();
     drawGraph();
+}
+
+function deleteVertex(vertexId, expectedVertex = null) {
+    const vertex = state.vertices.find(item => item.id === vertexId);
+    if (!vertex || (expectedVertex && vertex !== expectedVertex)) return;
+    saveHistory();
+    setGraph(
+        state.vertices.filter(item => item.id !== vertexId),
+        state.edges.filter(edge => edge.u !== vertexId && edge.v !== vertexId),
+        false
+    );
+    hideDeleteButton();
+}
+
+function showDeleteButton(vertex) {
+    let button = document.getElementById('deleteVertexButton');
+    if (!button) {
+        button = document.createElement('button');
+        button.id = 'deleteVertexButton';
+        button.className = 'vertex-delete-button';
+        button.innerHTML = '<i class="fa-solid fa-trash-can"></i> Xóa đỉnh';
+        button.addEventListener('pointerenter', () => clearTimeout(state.deleteTimer));
+        button.addEventListener('pointerleave', scheduleDeleteButtonHide);
+        dom.canvas.parentElement.appendChild(button);
+    }
+    button.style.left = `${vertex.x}px`;
+    button.style.top = `${vertex.y + 31}px`;
+    button.onclick = () => deleteVertex(vertex.id, vertex);
+    button.classList.add('is-visible');
+}
+
+function scheduleDeleteButtonHide() {
+    clearTimeout(state.deleteTimer);
+}
+
+function hideDeleteButton() {
+    const button = document.getElementById('deleteVertexButton');
+    if (button) button.classList.remove('is-visible');
+}
+
+function edgeLabelAt(point) {
+    const directHit = state.edgeHitBoxes.find(hit => Math.hypot(hit.x - point.x, hit.y - point.y) <= hit.radius);
+    if (directHit) return directHit;
+    return state.edgeHitBoxes.find(hit => {
+        const start = state.vertices.find(vertex => vertex.id === hit.edge.u);
+        const end = state.vertices.find(vertex => vertex.id === hit.edge.v);
+        if (!start || !end) return false;
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const lengthSquared = dx * dx + dy * dy || 1;
+        const t = Math.max(0.08, Math.min(0.92, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+        const nearestX = start.x + dx * t;
+        const nearestY = start.y + dy * t;
+        return Math.hypot(point.x - nearestX, point.y - nearestY) <= 15;
+    });
+}
+
+function editEdgeWeight(hit) {
+    if (state.editingEdgeId !== null) return;
+    state.editingEdgeId = hit.edge.id;
+    const editor = document.createElement('input');
+    editor.id = 'weightEditor';
+    editor.className = 'weight-editor';
+    editor.type = 'number';
+    editor.value = hit.edge.weight;
+    editor.dataset.edgeId = hit.edge.id;
+    editor.style.left = `${hit.x}px`;
+    editor.style.top = `${hit.y}px`;
+    dom.canvas.parentElement.appendChild(editor);
+    editor.focus();
+    editor.select();
+    editor.addEventListener('keydown', event => { if (event.key === 'Enter') commitWeightEdit(); if (event.key === 'Escape') cancelWeightEdit(); });
+    editor.addEventListener('blur', cancelWeightEdit, { once: true });
+    drawGraph();
+}
+
+function commitWeightEdit() {
+    const editor = document.getElementById('weightEditor');
+    if (!editor) return;
+    const weight = Number(editor.value);
+    const edgeId = Number(editor.dataset.edgeId);
+    if (Number.isFinite(weight)) {
+        saveHistory();
+        state.edges = state.edges.map(edge => edge.id === edgeId ? { ...edge, weight } : edge);
+        resetAnalysis();
+        updateStats();
+    }
+    cancelWeightEdit();
+}
+
+function cancelWeightEdit() {
+    const editor = document.getElementById('weightEditor');
+    if (editor) editor.remove();
+    state.editingEdgeId = null;
+    if (dom.canvas) drawGraph();
 }
 
 function connected(adjacency, includeIsolated = true) {
@@ -501,7 +705,7 @@ function formatPath(path) { return path.length ? path.map(vertexName).join(' →
 function formatDistance(distance) { return distance === Infinity ? '∞' : String(distance); }
 
 function analyzeGraph() {
-    if (state.vertices.length === 0) { showError('Đồ thị trống. Hãy thêm đỉnh hoặc sinh đồ thị.'); return; }
+    if (state.vertices.length === 0) { showError('Đồ thị trống. Hãy thêm đỉnh hoặc sinh đồ thị.'); return false; }
     const adjacency = graphAdjacency();
     const euler = findEuler(adjacency);
     const hamilton = findHamilton(adjacency);
@@ -515,6 +719,7 @@ function analyzeGraph() {
     state.analysis = { euler, hamilton, mstKruskal, mstPrim, dijkstra, bellmanFord, sourceId, targetId, selectedAlgorithms: selectedAnalysisAlgorithms() };
     renderAnalysis();
     prepareAnimation();
+    return true;
 }
 
 function renderAnalysis() {
@@ -524,15 +729,18 @@ function renderAnalysis() {
     const sourceName = vertexName(analysis.sourceId);
     const dijkstraLine = analysis.dijkstra.error ? `<span class="text-rose-500">${analysis.dijkstra.error}</span>` : `${escapeHtml(sourceName)}→đích: ${escapeHtml(formatDistance(analysis.dijkstra.distances[analysis.targetId]))}`;
     const bellmanLine = analysis.bellmanFord.negativeCycle ? '<span class="text-rose-500">Phát hiện chu trình âm có thể đi tới.</span>' : `${escapeHtml(sourceName)}→đích: ${escapeHtml(formatDistance(analysis.bellmanFord.distances[analysis.targetId]))}`;
-    const lines = [`<p><strong>Liên thông:</strong> <span class="${connectedAll ? 'text-emerald-500' : 'text-rose-500'}">${connectedAll ? 'Có' : 'Không'}</span></p>`];
-    if (selected.has('euler')) lines.push(`<p><strong>Euler:</strong> <span class="${analysis.euler.type === 'none' ? 'text-slate-500' : 'text-emerald-500'}">${analysis.euler.type === 'circuit' ? 'Có chu trình' : analysis.euler.type === 'path' ? 'Có đường đi' : `Không có (bậc lẻ: ${analysis.euler.odd.length})`}</span></p>${analysis.euler.path.length ? `<p class="truncate">${escapeHtml(formatPath(analysis.euler.path))}</p>` : ''}`);
-    if (selected.has('hamilton')) lines.push(`<p><strong>Hamilton:</strong> <span class="${analysis.hamilton.length ? 'text-emerald-500' : 'text-slate-500'}">${analysis.hamilton.length ? 'Có chu trình' : 'Không tìm thấy'}</span></p>${analysis.hamilton.length ? `<p class="truncate">${escapeHtml(formatPath(analysis.hamilton))}</p>` : ''}`);
-    if (selected.has('kruskal')) lines.push(`<p><strong>Kruskal:</strong> <span class="${analysis.mstKruskal.isTree ? 'text-emerald-500' : 'text-amber-500'}">${analysis.mstKruskal.isTree ? `MST = ${analysis.mstKruskal.total}` : 'Rừng khung'}</span></p>`);
-    if (selected.has('prim')) lines.push(`<p><strong>Prim:</strong> <span class="${analysis.mstPrim.isTree ? 'text-emerald-500' : 'text-rose-500'}">${analysis.mstPrim.isTree ? `MST = ${analysis.mstPrim.total}` : 'Cần đồ thị liên thông'}</span></p>`);
-    if (selected.has('dijkstra')) lines.push(`<p><strong>Dijkstra:</strong> ${dijkstraLine}</p>`);
-    if (selected.has('bellmanFord')) lines.push(`<p><strong>Bellman-Ford:</strong> ${bellmanLine}</p>`);
-    if (selected.has('dijkstra') || selected.has('bellmanFord')) lines.push(`<p class="text-slate-400">Nguồn: ${escapeHtml(vertexName(analysis.sourceId))} · Đích: ${escapeHtml(vertexName(analysis.targetId))}</p>`);
-    dom.result.innerHTML = `<div class="space-y-2.5">${lines.join('')}</div>`;
+    const traversal = [];
+    const minimumSpanningTree = [];
+    const shortestPath = [];
+    if (selected.has('euler')) traversal.push(`<p><strong>Euler:</strong> <span class="${analysis.euler.type === 'none' ? 'text-slate-500' : 'text-emerald-500'}">${analysis.euler.type === 'circuit' ? 'Có chu trình' : analysis.euler.type === 'path' ? 'Có đường đi' : `Không có (bậc lẻ: ${analysis.euler.odd.length})`}</span></p>${analysis.euler.path.length ? `<p class="truncate">${escapeHtml(formatPath(analysis.euler.path))}</p>` : ''}`);
+    if (selected.has('hamilton')) traversal.push(`<p><strong>Hamilton:</strong> <span class="${analysis.hamilton.length ? 'text-emerald-500' : 'text-slate-500'}">${analysis.hamilton.length ? 'Có chu trình' : 'Không tìm thấy'}</span></p>${analysis.hamilton.length ? `<p class="truncate">${escapeHtml(formatPath(analysis.hamilton))}</p>` : ''}`);
+    if (selected.has('kruskal')) minimumSpanningTree.push(`<p><strong>Kruskal:</strong> <span class="${analysis.mstKruskal.isTree ? 'text-emerald-500' : 'text-amber-500'}">${analysis.mstKruskal.isTree ? `MST = ${analysis.mstKruskal.total}` : 'Rừng khung'}</span></p>`);
+    if (selected.has('prim')) minimumSpanningTree.push(`<p><strong>Prim:</strong> <span class="${analysis.mstPrim.isTree ? 'text-emerald-500' : 'text-rose-500'}">${analysis.mstPrim.isTree ? `MST = ${analysis.mstPrim.total}` : 'Cần đồ thị liên thông'}</span></p>`);
+    if (selected.has('dijkstra')) shortestPath.push(`<p><strong>Dijkstra:</strong> ${dijkstraLine}</p>`);
+    if (selected.has('bellmanFord')) shortestPath.push(`<p><strong>Bellman-Ford:</strong> ${bellmanLine}</p>`);
+    if (shortestPath.length) shortestPath.push(`<p class="text-slate-400">Nguồn: ${escapeHtml(vertexName(analysis.sourceId))} · Đích: ${escapeHtml(vertexName(analysis.targetId))}</p>`);
+    const group = (title, content, icon) => content.length ? `<section class="analysis-result-group"><h3><i class="fa-solid ${icon}"></i>${title}</h3>${content.join('')}</section>` : '';
+    dom.result.innerHTML = `<div class="analysis-summary"><p><strong>Liên thông:</strong> <span class="${connectedAll ? 'text-emerald-500' : 'text-rose-500'}">${connectedAll ? 'Có' : 'Không'}</span></p>${group('Duyệt đồ thị', traversal, 'fa-route')}${group('Cây khung nhỏ nhất (MST)', minimumSpanningTree, 'fa-network-wired')}${group('Đường đi ngắn nhất', shortestPath, 'fa-location-arrow')}</div>`;
 }
 
 function edgeSteps(edges, label) {
@@ -545,13 +753,15 @@ function edgeSteps(edges, label) {
 function prepareAnimation() {
     const analysis = state.analysis;
     if (!analysis) return;
+    state.animationSteps = [];
     const selected = analysis.selectedAlgorithms;
-    if (selected.has('kruskal') && analysis.mstKruskal.edges.length) state.animationSteps = edgeSteps(analysis.mstKruskal.edges, 'Kruskal');
-    else if (selected.has('prim') && analysis.mstPrim.edges.length) state.animationSteps = edgeSteps(analysis.mstPrim.edges, 'Prim');
-    else if (selected.has('dijkstra') && !analysis.dijkstra.error) state.animationSteps = analysis.dijkstra.steps;
-    else if (selected.has('bellmanFord') && analysis.bellmanFord.steps.length) state.animationSteps = analysis.bellmanFord.steps;
-    else if (selected.has('euler') && analysis.euler.path.length) state.animationSteps = edgeSteps(analysis.euler.path.slice(1).map((id, index) => edgeBetween(analysis.euler.path[index], id)).filter(Boolean), 'Euler');
-    else if (selected.has('hamilton') && analysis.hamilton.length) state.animationSteps = edgeSteps(analysis.hamilton.slice(1).map((id, index) => edgeBetween(analysis.hamilton[index], id)).filter(Boolean), 'Hamilton');
+    const active = state.activeAlgorithm;
+    if ((active === 'kruskal' || (!active && selected.has('kruskal'))) && analysis.mstKruskal.edges.length) state.animationSteps = edgeSteps(analysis.mstKruskal.edges, 'Kruskal');
+    else if ((active === 'prim' || (!active && selected.has('prim'))) && analysis.mstPrim.edges.length) state.animationSteps = edgeSteps(analysis.mstPrim.edges, 'Prim');
+    else if ((active === 'dijkstra' || (!active && selected.has('dijkstra'))) && !analysis.dijkstra.error) state.animationSteps = analysis.dijkstra.steps;
+    else if ((active === 'bellmanFord' || (!active && selected.has('bellmanFord'))) && analysis.bellmanFord.steps.length) state.animationSteps = analysis.bellmanFord.steps;
+    else if ((active === 'euler' || (!active && selected.has('euler'))) && analysis.euler.path.length) state.animationSteps = edgeSteps(analysis.euler.path.slice(1).map((id, index) => edgeBetween(analysis.euler.path[index], id)).filter(Boolean), 'Euler');
+    else if ((active === 'hamilton' || (!active && selected.has('hamilton'))) && analysis.hamilton.length) state.animationSteps = edgeSteps(analysis.hamilton.slice(1).map((id, index) => edgeBetween(analysis.hamilton[index], id)).filter(Boolean), 'Hamilton');
     state.animationIndex = 0;
     const enabled = state.animationSteps.length > 0;
     dom.step.disabled = !enabled;
@@ -563,6 +773,10 @@ function showAnimationStep(index) {
     const step = state.animationSteps[index];
     dom.animationDescription.textContent = step.description;
     drawGraph(step.vertices ?? [], step.edges ?? []);
+    if (!state.loggedAnimationSteps.has(index)) {
+        appendLog(step.description, step.description.includes('Bỏ') || step.description.includes('Không') ? 'reject' : 'accept');
+        state.loggedAnimationSteps.add(index);
+    }
 }
 
 function startAnimation() {
@@ -582,16 +796,20 @@ function showError(message) { dom.result.innerHTML = `<p class="text-rose-500">$
 function bindEvents() {
     dom.randomCount.addEventListener('input', event => { dom.randomCountValue.textContent = event.target.value; });
     document.getElementById('btnGenerateRandom').addEventListener('click', generateRandomGraph);
-    document.getElementById('btnAnalyze').addEventListener('click', analyzeGraph);
+    document.getElementById('btnAnalyze').addEventListener('click', () => { state.activeAlgorithm = null; stopAnimation(); analyzeGraph(); });
     document.getElementById('btnClear').addEventListener('click', clearGraph);
     document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => loadPreset(button.dataset.preset)));
     dom.modeVertex.addEventListener('click', () => setMode('vertex'));
     dom.modeEdge.addEventListener('click', () => setMode('edge'));
     document.getElementById('btnToggleMatrix').addEventListener('click', () => dom.matrixContainer.classList.toggle('hidden'));
+    document.getElementById('btnToggleDegrees').addEventListener('click', () => dom.degreesContainer.classList.toggle('hidden'));
+    document.getElementById('btnUndo').addEventListener('click', undoGraphChange);
     document.getElementById('themeToggle').addEventListener('click', () => { document.documentElement.classList.toggle('dark'); drawGraph(); });
     document.getElementById('btnHelp').addEventListener('click', () => document.getElementById('helpModal').classList.remove('hidden'));
     document.getElementById('btnCloseHelp').addEventListener('click', () => document.getElementById('helpModal').classList.add('hidden'));
     document.getElementById('btnUnderstand').addEventListener('click', () => document.getElementById('helpModal').classList.add('hidden'));
+    dom.runButton.addEventListener('click', runSelectedAlgorithm);
+    document.getElementById('btnClearLog').addEventListener('click', () => clearLog());
     dom.step.addEventListener('click', () => { dom.animationBar.classList.remove('hidden'); dom.animationBar.classList.add('flex'); showAnimationStep(state.animationIndex); state.animationIndex = (state.animationIndex + 1) % state.animationSteps.length; });
     dom.play.addEventListener('click', () => { dom.animationBar.classList.remove('hidden'); dom.animationBar.classList.add('flex'); state.animationTimer ? stopAnimation() : startAnimation(); });
     dom.animationPausePlay.addEventListener('click', () => state.animationTimer ? stopAnimation() : startAnimation());
@@ -602,6 +820,8 @@ function bindEvents() {
         const point = canvasPoint(event);
         const vertex = findVertexAt(point);
         state.didDrag = false;
+        const weightHit = edgeLabelAt(point);
+        if (!vertex && weightHit) { editEdgeWeight(weightHit); return; }
         if (vertex) {
             state.draggingVertex = vertex;
             dom.canvas.setPointerCapture(event.pointerId);
@@ -610,16 +830,36 @@ function bindEvents() {
     });
     dom.canvas.addEventListener('pointermove', event => {
         const point = canvasPoint(event);
-        if (state.draggingVertex) { state.draggingVertex.x = point.x; state.draggingVertex.y = point.y; state.didDrag = true; drawGraph(); return; }
-        state.hoveredVertex = findVertexAt(point);
+        if (state.draggingVertex) {
+            clearTimeout(state.deleteTimer);
+            hideDeleteButton();
+            if (!state.dragHistorySaved) { saveHistory(); state.dragHistorySaved = true; }
+            state.draggingVertex.x = point.x;
+            state.draggingVertex.y = point.y;
+            state.didDrag = true;
+            drawGraph();
+            return;
+        }
+        const nextHoveredVertex = findVertexAt(point);
+        if (nextHoveredVertex !== state.hoveredVertex) hideDeleteButton();
+        state.hoveredVertex = nextHoveredVertex;
+        clearTimeout(state.deleteTimer);
+        if (state.hoveredVertex && !state.draggingVertex) showDeleteButton(state.hoveredVertex);
+        else if (!state.hoveredVertex) clearTimeout(state.deleteTimer);
         dom.canvas.style.cursor = state.hoveredVertex ? 'pointer' : state.mode === 'vertex' ? 'crosshair' : 'default';
         drawGraph();
     });
     dom.canvas.addEventListener('pointerup', event => {
+        clearTimeout(state.deleteTimer);
         state.draggingVertex = null;
+        state.dragHistorySaved = false;
         if (dom.canvas.hasPointerCapture(event.pointerId)) dom.canvas.releasePointerCapture(event.pointerId);
     });
-    dom.canvas.addEventListener('pointerleave', () => { if (!state.draggingVertex) state.hoveredVertex = null; });
+    dom.canvas.addEventListener('pointerleave', event => {
+        const deleteButton = document.getElementById('deleteVertexButton');
+        if (deleteButton && event.relatedTarget === deleteButton) return;
+        if (!state.draggingVertex) state.hoveredVertex = null;
+    });
     dom.canvas.addEventListener('click', event => {
         if (state.didDrag || state.mode !== 'edge') return;
         const vertex = findVertexAt(canvasPoint(event));
@@ -628,6 +868,9 @@ function bindEvents() {
         else if (state.selectedVertex.id === vertex.id) state.selectedVertex = null;
         else { addEdge(state.selectedVertex, vertex); state.selectedVertex = null; }
         drawGraph();
+    });
+    document.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undoGraphChange(); }
     });
 }
 
