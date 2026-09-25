@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="vi" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Trực quan hóa Euler, Hamilton, Kruskal, Prim, Dijkstra và Bellman-Ford">
+    <title>Trực quan hóa thuật toán đồ thị</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Space Grotesk', 'sans-serif'], mono: ['DM Mono', 'monospace'] }
+                }
+            }
+        };
+    </script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="h-full bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors duration-200">
+    <div class="flex flex-col h-full overflow-hidden">
+        <header class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-900/85 backdrop-blur z-20 shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="brand-mark"><i class="fa-solid fa-diagram-project"></i></div>
+                <div>
+                    <h1 class="font-bold text-lg leading-tight brand-title">Đồ thị & Thuật toán</h1>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Euler · Hamilton · MST · đường đi ngắn nhất</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <button id="themeToggle" class="icon-button" title="Đổi giao diện" aria-label="Đổi giao diện"><i class="fa-solid fa-moon dark:hidden"></i><i class="fa-solid fa-sun hidden dark:inline"></i></button>
+                <button id="btnHelp" class="secondary-button"><i class="fa-solid fa-circle-question"></i><span>Hướng dẫn</span></button>
+            </div>
+        </header>
+
+        <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+            <aside class="lg:col-span-4 xl:col-span-3 flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-y-auto p-5 space-y-5">
+                <section>
+                    <label class="section-label">Chế độ vẽ</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="modeVertex" class="mode-button is-active"><i class="fa-solid fa-circle-dot"></i><span>Thêm đỉnh</span></button>
+                        <button id="modeEdge" class="mode-button"><i class="fa-solid fa-arrow-trend-up"></i><span>Nối cạnh</span></button>
+                    </div>
+                    <div class="mt-3 grid grid-cols-2 gap-2">
+                        <label class="field-label">Trọng số mới
+                            <input id="edgeWeightInput" class="field-input" type="number" min="-99" max="999" value="1" step="1">
+                        </label>
+                        <label class="field-label">Nguồn
+                            <select id="sourceSelect" class="field-input"></select>
+                        </label>
+                    </div>
+                    <label class="field-label mt-2">Đích
+                        <select id="targetSelect" class="field-input"></select>
+                    </label>
+                </section>
+
+                <section class="control-panel">
+                    <label class="section-label">Sinh ngẫu nhiên</label>
+                    <div class="flex items-center gap-3">
+                        <label class="field-label flex-1">Số đỉnh <strong id="vertexCountVal">5</strong>
+                            <input id="vertexCountRange" type="range" min="3" max="10" value="5" class="w-full accent-indigo-600 cursor-pointer">
+                        </label>
+                        <button id="btnGenerateRandom" class="primary-button shrink-0"><i class="fa-solid fa-dice"></i><span>Tạo</span></button>
+                    </div>
+                    <div class="mt-3">
+                        <label class="field-label">Trọng số ngẫu nhiên
+                            <select id="weightMode" class="field-input">
+                                <option value="positive">Không âm, dùng được cho Dijkstra</option>
+                                <option value="negative">Cho phép số âm, dành cho Bellman-Ford</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs" id="randomAlgorithmOptions">
+                        <label class="check-row"><input type="checkbox" value="euler" checked><span>Euler</span></label>
+                        <label class="check-row"><input type="checkbox" value="hamilton"><span>Hamilton</span></label>
+                        <label class="check-row"><input type="checkbox" value="kruskal"><span>Kruskal</span></label>
+                        <label class="check-row"><input type="checkbox" value="prim"><span>Prim</span></label>
+                        <label class="check-row"><input type="checkbox" value="dijkstra"><span>Dijkstra</span></label>
+                        <label class="check-row"><input type="checkbox" value="bellmanFord"><span>Bellman-Ford</span></label>
+                    </div>
+                    <label class="check-row mt-3"><input id="randomExtraBranches" type="checkbox" checked><span>Thêm nhánh phụ ngẫu nhiên</span></label>
+                    <label class="field-label mt-2">Mật độ nhánh phụ
+                        <select id="randomDensity" class="field-input">
+                            <option value="light">Thưa</option>
+                            <option value="medium" selected>Vừa</option>
+                            <option value="dense">Dày</option>
+                        </select>
+                    </label>
+                    <p class="hint-text">Các ô được chọn là tính chất cần bảo đảm. Cấu hình mâu thuẫn sẽ giữ nguyên đồ thị hiện tại. Với đồ thị vô hướng, cạnh âm tạo chu trình âm hai chiều.</p>
+                </section>
+
+                <section>
+                    <label class="section-label">Mẫu đồ thị</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="preset-button" data-preset="eulerian">Euler <i class="fa-solid fa-check-circle text-emerald-500"></i></button>
+                        <button class="preset-button" data-preset="hamiltonian">Hamilton <i class="fa-solid fa-check-circle text-purple-500"></i></button>
+                        <button class="preset-button" data-preset="both">Cả hai (K4) <i class="fa-solid fa-star text-amber-500"></i></button>
+                        <button class="preset-button" data-preset="petersen">Petersen <i class="fa-solid fa-shield text-slate-500"></i></button>
+                        <button class="preset-button" data-preset="complete">Toàn phần K5 <i class="fa-solid fa-circle-nodes text-cyan-500"></i></button>
+                        <button class="preset-button" data-preset="star">Sao K1,5 <i class="fa-solid fa-sun text-amber-500"></i></button>
+                        <button class="preset-button" data-preset="bipartite">K3,3 <i class="fa-solid fa-table-cells text-rose-500"></i></button>
+                        <button class="preset-button" data-preset="wheel">Bánh xe W6 <i class="fa-solid fa-gear text-indigo-500"></i></button>
+                    </div>
+                </section>
+
+                <section class="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                    <label class="section-label">Phân tích</label>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-2 text-xs" id="analysisOptions">
+                        <label class="check-row"><input type="checkbox" value="euler" checked><span>Euler</span></label>
+                        <label class="check-row"><input type="checkbox" value="hamilton" checked><span>Hamilton</span></label>
+                        <label class="check-row"><input type="checkbox" value="kruskal" checked><span>Kruskal</span></label>
+                        <label class="check-row"><input type="checkbox" value="prim" checked><span>Prim</span></label>
+                        <label class="check-row"><input type="checkbox" value="dijkstra" checked><span>Dijkstra</span></label>
+                        <label class="check-row"><input type="checkbox" value="bellmanFord" checked><span>Bellman-Ford</span></label>
+                    </div>
+                    <button id="btnAnalyze" class="analysis-button"><i class="fa-solid fa-bolt"></i><span>Phân tích đồ thị</span></button>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="btnStep" disabled class="animation-button"><i class="fa-solid fa-forward-step"></i><span>Từng bước</span></button>
+                        <button id="btnPlay" disabled class="animation-button"><i class="fa-solid fa-play"></i><span>Tự động</span></button>
+                    </div>
+                </section>
+
+                <section class="result-panel">
+                    <h2 class="font-semibold text-sm flex items-center"><i class="fa-solid fa-square-poll-vertical mr-2 text-indigo-500"></i>Kết quả</h2>
+                    <div id="resultContent" class="text-xs space-y-2 text-slate-600 dark:text-slate-300 font-mono mt-3"><p class="italic text-slate-400">Hãy tạo hoặc vẽ đồ thị, sau đó bấm Phân tích.</p></div>
+                </section>
+
+                <section>
+                    <button id="btnToggleMatrix" class="w-full compact-button"><span><i class="fa-solid fa-table mr-2 text-indigo-500"></i>Ma trận kề</span><i class="fa-solid fa-chevron-down"></i></button>
+                    <div id="matrixContainer" class="hidden mt-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 overflow-x-auto"><div id="matrixContent" class="text-xs font-mono whitespace-pre"></div></div>
+                </section>
+            </aside>
+
+            <main class="lg:col-span-8 xl:col-span-9 flex flex-col h-full bg-slate-100/50 dark:bg-slate-950 overflow-hidden">
+                <div class="flex items-center justify-between px-6 py-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0">
+                    <div class="flex items-center gap-2 text-sm font-semibold text-indigo-600 dark:text-indigo-400"><i class="fa-solid fa-draw-polygon"></i>Vùng vẽ tương tác</div>
+                    <div class="flex items-center gap-3"><span class="text-xs text-slate-400 dark:text-slate-500" id="canvasStats">0 đỉnh | 0 cạnh</span><button id="btnClear" class="clear-canvas-button"><i class="fa-solid fa-trash-can"></i><span>Xóa tất cả</span></button></div>
+                </div>
+                <div id="viewCanvas" class="flex-1 relative overflow-hidden flex flex-col">
+                    <div class="canvas-legend"><span><i class="legend-dot dot-node"></i>Đỉnh</span><span><i class="legend-dot dot-selected"></i>Chọn</span><span><i class="legend-dot dot-active"></i>Đang duyệt</span></div>
+                    <div class="flex-1 relative w-full h-full cursor-crosshair"><canvas id="graphCanvas" class="w-full h-full"></canvas></div>
+                    <div id="animControlBar" class="animation-bar hidden items-center gap-4">
+                        <span id="animStepDesc" class="text-xs font-medium text-slate-600 dark:text-slate-300">Bắt đầu...</span>
+                        <div class="flex items-center gap-2"><button id="animPrev" class="icon-button compact"><i class="fa-solid fa-backward-step"></i></button><button id="animPausePlay" class="play-button"><i class="fa-solid fa-pause"></i></button><button id="animNext" class="icon-button compact"><i class="fa-solid fa-forward-step"></i></button></div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div id="helpModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+        <div class="modal-panel">
+            <div class="flex items-center justify-between"><h2 id="helpTitle" class="font-bold text-lg"><i class="fa-solid fa-circle-question text-indigo-500 mr-2"></i>Hướng dẫn sử dụng</h2><button id="btnCloseHelp" class="icon-button" aria-label="Đóng"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="space-y-3 text-sm text-slate-600 dark:text-slate-300 mt-4">
+                <p><strong>Vẽ:</strong> thêm đỉnh bằng cách bấm vào vùng trống. Chọn Nối cạnh, bấm hai đỉnh để nối; trọng số lấy từ ô Trọng số mới.</p>
+                <p><strong>Ngẫu nhiên:</strong> tích các thuật toán cần bảo đảm rồi bấm Tạo. Euler/Hamilton/MST cần đồ thị phù hợp; Dijkstra không đi cùng chế độ trọng số âm.</p>
+                <p><strong>Đường đi:</strong> chọn Nguồn và Đích. Bellman-Ford vẫn chạy với trọng số âm; trên đồ thị vô hướng, một cạnh âm tạo chu trình âm hai chiều và sẽ được báo rõ.</p>
+                <p><strong>Mô phỏng:</strong> Phân tích đồ thị, sau đó dùng Từng bước hoặc Tự động.</p>
+            </div>
+            <div class="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-end mt-4"><button id="btnUnderstand" class="primary-button">Đã hiểu</button></div>
+        </div>
+    </div>
+    <script src="js/app.js" defer></script>
+</body>
+</html>
